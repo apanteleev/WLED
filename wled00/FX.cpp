@@ -27,6 +27,7 @@
 #include "wled.h"
 #include "FX.h"
 #include "fcn_declare.h"
+#include "webb_leds.h"
 
 #define IBN 5100
 
@@ -374,11 +375,54 @@ static const char _data_FX_MODE_FADE[] PROGMEM = "Fade@!;!,!;!;01";
  */
 uint16_t scan(bool dual) {
   if (SEGLEN == 1) return mode_static();
-  uint32_t cycleTime = 750 + (255 - SEGMENT.speed)*150;
+  uint32_t cycleTime = 500 + (255 - SEGMENT.speed)*15;
+  if (dual) cycleTime <<= 1;
   uint32_t perc = strip.now % cycleTime;
-  int prog = (perc * 65535) / cycleTime;
+  int prog = (perc * 16384) / cycleTime;
+
+  if (SEGLEN == WEBB_LEDS_INNER || SEGLEN == WEBB_LEDS_OUTER) {
+    if (dual) { 
+      prog = ((prog > 8192) ? (16384 - prog) : prog) << 1; // saw
+      prog = (((prog * prog) >> 14) * (3 * 16384 - 2 * prog)) >> 14; // smoothstep
+    }
+    // width of the band, in radius units
+    int width = ((WEBB_RADIUS_MAX - WEBB_RADIUS_MIN) * (SEGMENT.intensity + 64)) >> 9;
+    int overscan = dual ? ((3*width) >> 3) : width;
+    // center of the band
+    int center = ((prog * (WEBB_RADIUS_MAX - WEBB_RADIUS_MIN + (overscan << 1))) >> 14) + WEBB_RADIUS_MIN - overscan;
+    // radius min/max bounds
+    int rmin = center - (width >> 1);
+    int rmax = rmin + width;
+
+    for (int j = 0; j < SEGLEN; ++j) {
+      int r = (SEGLEN == WEBB_LEDS_INNER) ? g_InnerStripPolar[j][0] : g_OuterStripPolar[j][0];
+
+      CRGB col = 0;
+      if (r >= rmin && r <= rmax) {
+        // smooth band edges
+        int dist = abs(r - center);
+        int hsize = width >> 1;
+        int brightness = (4*256 * (hsize - dist)) / hsize;
+        brightness = max(0, min(255, brightness));
+
+        // get the led angle
+        int phi = (SEGLEN == WEBB_LEDS_INNER) ? g_InnerStripPolar[j][1] : g_OuterStripPolar[j][1];
+        // rotation
+        phi += (strip.now * SEGMENT.custom1) >> 2;
+        phi = phi & 0x3fff;
+        // palette lookup based on angle
+        col = SEGMENT.color_from_palette(phi >> 6, false, PALETTE_SOLID_WRAP, 0);
+
+        // apply brightness
+        col = col.scale8(brightness);
+      }
+      SEGMENT.setPixelColor(j, col);
+    }
+    return FRAMETIME;
+  }
+  
   int size = 1 + ((SEGMENT.intensity * SEGLEN) >> 9);
-  int ledIndex = (prog * ((SEGLEN *2) - size *2)) >> 16;
+  int ledIndex = (prog * ((SEGLEN *2) - size *2)) >> 14;
 
   if (!SEGMENT.check2) SEGMENT.fill(SEGCOLOR(1));
 
@@ -406,7 +450,7 @@ uint16_t scan(bool dual) {
 uint16_t mode_scan(void) {
   return scan(false);
 }
-static const char _data_FX_MODE_SCAN[] PROGMEM = "Scan@!,# of dots,,,,,Overlay;!,!,!;!";
+static const char _data_FX_MODE_SCAN[] PROGMEM = "Scan@!,Width,Rotation,,,,Overlay;!,!,!;!";
 
 
 /*
@@ -415,7 +459,7 @@ static const char _data_FX_MODE_SCAN[] PROGMEM = "Scan@!,# of dots,,,,,Overlay;!
 uint16_t mode_dual_scan(void) {
   return scan(true);
 }
-static const char _data_FX_MODE_DUAL_SCAN[] PROGMEM = "Scan Dual@!,# of dots,,,,,Overlay;!,!,!;!";
+static const char _data_FX_MODE_DUAL_SCAN[] PROGMEM = "Scan Dual@!,Width,Rotation,,,,Overlay;!,!,!;!";
 
 
 /*
