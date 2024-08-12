@@ -2129,8 +2129,6 @@ uint16_t mode_fire_webb() {
     return mode_static();
   byte* heat = sim_segment.data;
 
-  const uint32_t it = strip.now >> 5;
-
   // segment 0 runs the simulation
   if (strip.getCurrSegmentId() == 0) {
     const uint8_t ignition = max(3, sim_rows/10);  // ignition area: 10% of height or minimum 3 pixels
@@ -2140,28 +2138,24 @@ uint16_t mode_fire_webb() {
 
       // Step 1.  Cool down every cell a little
       for (int i = 0; i < sim_rows; i++) {
-        uint8_t cool = (it != sim_segment.step) ? random8((((20 + sim_segment.speed/3) * 16) / sim_rows)+2) : random8(4);
+        uint8_t cool = random8((((20 + sim_segment.speed/3) * 16) / sim_rows)+2);
         uint8_t minTemp = (i<ignition) ? (ignition-i)/4 + 16 : 0;  // should not become black in ignition area
         uint8_t temp = qsub8(col_heat[i], cool);
         col_heat[i] = temp<minTemp ? minTemp : temp;
       }
 
-      if (it != sim_segment.step) {
-        // Step 2.  Heat from each cell drifts 'up' and diffuses a little
-        for (int k = sim_rows - 1; k > 1; k--) {
-          col_heat[k] = (col_heat[k - 1] + (col_heat[k - 2]<<1) ) / 3;  // col_heat[k-2] multiplied by 2
-        }
+      // Step 2.  Heat from each cell drifts 'up' and diffuses a little
+      for (int k = sim_rows - 1; k > 1; k--) {
+        col_heat[k] = (col_heat[k - 1] + (col_heat[k - 2]<<1) ) / 3;  // col_heat[k-2] multiplied by 2
+      }
 
-        // Step 3.  Randomly ignite new 'sparks' of heat near the bottom
-        if (random8() <= sim_segment.intensity) {
-          uint8_t y = random8(ignition);
-          uint8_t boost = (17+sim_segment.custom3) * (ignition - y/2) / ignition; // integer math!
-          col_heat[y] = qadd8(col_heat[y], random8(96+2*boost,207+boost));
-        }
+      // Step 3.  Randomly ignite new 'sparks' of heat near the bottom
+      if (random8() <= sim_segment.intensity) {
+        uint8_t y = random8(ignition);
+        uint8_t boost = (17+sim_segment.custom3) * (ignition - y/2) / ignition; // integer math!
+        col_heat[y] = qadd8(col_heat[y], random8(96+2*boost,207+boost));
       }
     }
-
-    sim_segment.step = it;
   }
 
   for (int j = 0; j < SEGLEN; ++j) {
