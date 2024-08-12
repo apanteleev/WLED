@@ -37,6 +37,47 @@
 
 #define indexToVStrip(index, stripNr) ((index) | (int((stripNr)+1)<<16))
 
+static bool segment_is_webb(int seglen) {
+  return seglen == WEBB_LEDS_INNER || seglen == WEBB_LEDS_OUTER;
+}
+
+static void webb_get_polar(int seglen, int pixel, int& radius, int& angle) {
+  if (seglen == WEBB_LEDS_INNER) {
+    radius = g_InnerStripPolar[pixel][0];
+    angle = g_InnerStripPolar[pixel][1];
+  }
+  else {
+    radius = g_OuterStripPolar[pixel][0];
+    angle = g_OuterStripPolar[pixel][1];
+  }
+}
+
+#define LERP_BITS 8
+#define LERP_SCALE (1<<(LERP_BITS))
+
+// samples a 2D image (row-major layout) with bilinear interpolation, x and y are scaled by LERP_SCALE
+static uint8_t sample_bilerp(uint8_t const* data, int width, int height, int x, int y) {
+  x = min(x, (width-1) << LERP_BITS);
+  y = min(y, (height-1) << LERP_BITS);
+
+  int x0 = x >> LERP_BITS;
+  int y0 = y >> LERP_BITS;
+  //return data[x0 + y0 * pitch];
+  
+  uint32_t wx1 = x & (LERP_SCALE-1);
+  uint32_t wy1 = y & (LERP_SCALE-1);
+  uint32_t wx0 = LERP_SCALE - wx1;
+  uint32_t wy0 = LERP_SCALE - wy1;
+  
+  data += x0 + y0 * width;
+  
+  uint32_t sum = data[0] * wx0 * wy0;
+  if (wx1 > 0) sum += data[1] * wx1 * wy0;
+  if (wy1 > 0) sum += data[width] * wx0 * wy1;
+  if (wx1 > 0 && wy1 > 0) sum += data[width + 1] * wx1 * wy1;
+  return sum >> (LERP_BITS*2);
+}
+
 // effect utility functions
 uint8_t sin_gap(uint16_t in) {
   if (in & 0x100) return 0;
@@ -380,7 +421,7 @@ uint16_t scan(bool dual) {
   uint32_t perc = strip.now % cycleTime;
   int prog = (perc * 16384) / cycleTime;
 
-  if (SEGLEN == WEBB_LEDS_INNER || SEGLEN == WEBB_LEDS_OUTER) {
+  if (segment_is_webb(SEGLEN)) {
     if (dual) { 
       prog = ((prog > 8192) ? (16384 - prog) : prog) << 1; // saw
       prog = (((prog * prog) >> 14) * (3 * 16384 - 2 * prog)) >> 14; // smoothstep
@@ -395,7 +436,9 @@ uint16_t scan(bool dual) {
     int rmax = rmin + width;
 
     for (int j = 0; j < SEGLEN; ++j) {
-      int r = (SEGLEN == WEBB_LEDS_INNER) ? g_InnerStripPolar[j][0] : g_OuterStripPolar[j][0];
+      // get the led position in polar coordinates
+      int r, phi;
+      webb_get_polar(SEGLEN, j, r, phi);
 
       CRGB col = 0;
       if (r >= rmin && r <= rmax) {
@@ -405,8 +448,6 @@ uint16_t scan(bool dual) {
         int brightness = (4*256 * (hsize - dist)) / hsize;
         brightness = max(0, min(255, brightness));
 
-        // get the led angle
-        int phi = (SEGLEN == WEBB_LEDS_INNER) ? g_InnerStripPolar[j][1] : g_OuterStripPolar[j][1];
         // rotation
         phi += (strip.now * SEGMENT.custom1) >> 2;
         phi = phi & 0x3fff;
@@ -2076,6 +2117,65 @@ uint16_t mode_palette() {
 }
 static const char _data_FX_MODE_PALETTE[] PROGMEM = "Palette@Shift,Size,Rotation,,,Animate Shift,Animate Rotation,Anamorphic;;!;12;c1=128,c2=128,c3=128,o1=1,o2=1,o3=0";
 
+uint16_t mode_fire_webb() {
+  int const sim_columns = 64;
+  int const sim_rows = 32;
+
+  // segment that handles the shared simulation
+  segment& sim_segment = strip._segments[0];
+
+  // allocate simulation data - 
+  if (!sim_segment.allocateData(sim_columns * sim_rows))
+    return mode_static();
+  byte* heat = sim_segment.data;
+
+  const uint32_t it = strip.now >> 5;
+
+  // segment 0 runs the simulation
+  if (strip.getCurrSegmentId() == 0) {
+    const uint8_t ignition = max(3, sim_rows/10);  // ignition area: 10% of height or minimum 3 pixels
+
+    for (int col = 0; col < sim_columns; ++col) {
+      byte* col_heat = heat + sim_rows * col;
+
+      // Step 1.  Cool down every cell a little
+      for (int i = 0; i < sim_rows; i++) {
+        uint8_t cool = (it != sim_segment.step) ? random8((((20 + sim_segment.speed/3) * 16) / sim_rows)+2) : random8(4);
+        uint8_t minTemp = (i<ignition) ? (ignition-i)/4 + 16 : 0;  // should not become black in ignition area
+        uint8_t temp = qsub8(col_heat[i], cool);
+        col_heat[i] = temp<minTemp ? minTemp : temp;
+      }
+
+      if (it != sim_segment.step) {
+        // Step 2.  Heat from each cell drifts 'up' and diffuses a little
+        for (int k = sim_rows - 1; k > 1; k--) {
+          col_heat[k] = (col_heat[k - 1] + (col_heat[k - 2]<<1) ) / 3;  // col_heat[k-2] multiplied by 2
+        }
+
+        // Step 3.  Randomly ignite new 'sparks' of heat near the bottom
+        if (random8() <= sim_segment.intensity) {
+          uint8_t y = random8(ignition);
+          uint8_t boost = (17+sim_segment.custom3) * (ignition - y/2) / ignition; // integer math!
+          col_heat[y] = qadd8(col_heat[y], random8(96+2*boost,207+boost));
+        }
+      }
+    }
+
+    sim_segment.step = it;
+  }
+
+  for (int j = 0; j < SEGLEN; ++j) {
+    int r, phi;
+    webb_get_polar(SEGLEN, j, r, phi);
+    int col = phi; // * sim_columns * LERP_BITS / 16384(phi_scale) == 1
+    int row = ((r - WEBB_RADIUS_MIN / 2) * sim_rows * LERP_SCALE) / (WEBB_RADIUS_MAX - WEBB_RADIUS_MIN / 2 + 1);
+    uint8_t pixel_heat = sample_bilerp(heat, sim_rows, sim_columns, row, col);
+
+    SEGMENT.setPixelColor(j, ColorFromPalette(SEGPALETTE, min(pixel_heat, byte(240)), 255, NOBLEND));
+  }
+  
+  return FRAMETIME;
+}
 
 // WLED limitation: Analog Clock overlay will NOT work when Fire2012 is active
 // Fire2012 by Mark Kriegsman, July 2012
@@ -2107,6 +2207,10 @@ static const char _data_FX_MODE_PALETTE[] PROGMEM = "Palette@Shift,Size,Rotation
 // in step 3 above) (Effect Intensity = Sparking).
 uint16_t mode_fire_2012() {
   if (SEGLEN == 1) return mode_static();
+
+  if (segment_is_webb(SEGLEN))
+    return mode_fire_webb();
+
   const unsigned strips = SEGMENT.nrOfVStrips();
   if (!SEGENV.allocateData(strips * SEGLEN)) return mode_static(); //allocation failed
   byte* heat = SEGENV.data;
