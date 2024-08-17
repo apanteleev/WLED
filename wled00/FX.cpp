@@ -42,14 +42,9 @@ static bool segment_is_webb(int seglen) {
 }
 
 static void webb_get_polar(int seglen, int pixel, int& radius, int& angle) {
-  if (seglen == WEBB_LEDS_INNER) {
-    radius = g_InnerStripPolar[pixel][0];
-    angle = g_InnerStripPolar[pixel][1];
-  }
-  else {
-    radius = g_OuterStripPolar[pixel][0];
-    angle = g_OuterStripPolar[pixel][1];
-  }
+  int base = (seglen == WEBB_LEDS_INNER) ? 0 : WEBB_LEDS_INNER;
+  radius = g_WebbPositionsPolar[base + pixel][0];
+  angle = g_WebbPositionsPolar[base + pixel][1];
 }
 
 #define LERP_BITS 8

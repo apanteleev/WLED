@@ -2,10 +2,11 @@
 
 #define WEBB_LEDS_INNER 546
 #define WEBB_LEDS_OUTER 402
+#define WEBB_LEDS_COMBINED 948
 #define WEBB_RADIUS_MIN 3275
 #define WEBB_RADIUS_MAX 16477
 
-static const int g_InnerStripCartesian[546][2] = {
+static const int g_WebbPositionsCartesian[WEBB_LEDS_COMBINED][2] = {
   { -1746, 3276 },
   { -1455, 3276 },
   { -1164, 3276 },
@@ -552,9 +553,6 @@ static const int g_InnerStripCartesian[546][2] = {
   { -9095, 9200 },
   { -9241, 9452 },
   { -9386, 9704 },
-};
-
-static const int g_OuterStripCartesian[402][2] = {
   { -3710, 13233 },
   { -3565, 13485 },
   { -3419, 13737 },
@@ -960,8 +958,8 @@ static const int g_OuterStripCartesian[402][2] = {
 };
 
 
-// Polar coordinated. Angle is from 0 to 16k.
-static const int g_InnerStripPolar[546][2] = {
+// Polar coordinates. Angle is from 0 to 16k.
+static const int g_WebbPositionsPolar[WEBB_LEDS_COMBINED][2] = {
   { 3712, 5372 },
   { 3584, 5185 },
   { 3476, 4986 },
@@ -1508,9 +1506,6 @@ static const int g_InnerStripPolar[546][2] = {
   { 12936, 6129 },
   { 13218, 6114 },
   { 13500, 6100 },
-};
-
-static const int g_OuterStripPolar[402][2] = {
   { 13743, 4808 },
   { 13948, 4769 },
   { 14156, 4732 },
