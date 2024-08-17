@@ -47,6 +47,16 @@ static void webb_get_polar(int seglen, int pixel, int& radius, int& angle) {
   angle = g_WebbPositionsPolar[base + pixel][1];
 }
 
+struct webb_segment_def_t
+{
+  uint16_t begin;
+  uint16_t end;
+  int16_t beginAdj0;
+  int16_t beginAdj1;
+  int16_t endAdj0;
+  int16_t endAdj1;
+};
+
 #define LERP_BITS 8
 #define LERP_SCALE (1<<(LERP_BITS))
 
@@ -8030,6 +8040,83 @@ static const char _data_FX_MODE_2DWAVINGCELL[] PROGMEM = "Waving Cell@!,,Amplitu
 
 #endif // WLED_DISABLE_2D
 
+uint16_t mode_snake(void) {
+  if (!segment_is_webb(SEGLEN))
+    return mode_static();
+
+  // segment that handles the shared simulation
+  segment& sim_segment = strip._segments[0];
+
+  struct sim_data_t
+  {
+    uint16_t head;
+    bool up;
+  };
+
+  if (!sim_segment.allocateData(sizeof(sim_data_t))) return mode_static(); // allocation failed
+  sim_data_t& sim_data = *reinterpret_cast<sim_data_t*>(sim_segment.data);
+
+  if (strip.getCurrSegmentId() == 0) {
+    // Segment 0 runs the simulation
+
+    if(sim_segment.call == 0) {
+      // Initialize at a random location
+      sim_data.head = random16(WEBB_LEDS_COMBINED);
+      sim_data.up = true;
+    }
+    else {
+      // Run the simulation - look for the segment the head is currently in
+      for (int segmentIndex = 0; segmentIndex < WEBB_SEGMENTS; ++segmentIndex) {
+
+        webb_segment_def_t const* segment = reinterpret_cast<webb_segment_def_t const*>(g_WebbSegments[segmentIndex]);
+        if (sim_data.head >= segment->begin && sim_data.head <= segment->end) {
+          // Found the segment
+
+          if (sim_data.head == segment->begin && !sim_data.up) {
+            // At the beginning of the segment, going down
+            int16_t const adj = (segment->beginAdj1 >= 0 && random8() > 128)
+              ? segment->beginAdj1
+              : segment->beginAdj0;
+            sim_data.head = adj & (WEBB_ADJACENT_DOWN - 1);
+            sim_data.up = (adj & WEBB_ADJACENT_DOWN) == 0;
+
+          } else if (sim_data.head == segment->end && sim_data.up) {
+            // At the end of the segment, going up
+            int16_t const adj = (segment->endAdj1 >= 0 && random8() > 128)
+              ? segment->endAdj1
+              : segment->endAdj0;
+            sim_data.head = adj & (WEBB_ADJACENT_DOWN - 1);
+            sim_data.up = (adj & WEBB_ADJACENT_DOWN) == 0;
+
+          } else {
+            // Somewhere inside the segment
+            if (sim_data.up)
+              ++sim_data.head;
+            else
+              --sim_data.head;
+          }
+
+          break;
+        }
+
+      }
+    }
+  }
+
+  int baseIndex = (SEGLEN == WEBB_LEDS_INNER) ? 0 : WEBB_LEDS_INNER;
+  for (int i = 0; i < SEGLEN; i++) {
+    CRGB color;
+    if (baseIndex + i == sim_data.head)
+      color = WHITE;
+    else
+      color = BLACK;
+    SEGMENT.setPixelColor(i, color);
+  }
+
+  return FRAMETIME;
+}
+static const char _data_FX_MODE_SNAKE[] PROGMEM = "Snake@Fade speed,Spawn speed;;!;;;";
+
 
 //////////////////////////////////////////////////////////////////////////////////////////
 // mode data
@@ -8270,4 +8357,5 @@ void WS2812FX::setupEffectData() {
   addEffect(FX_MODE_2DAKEMI, &mode_2DAkemi, _data_FX_MODE_2DAKEMI); // audio
 #endif // WLED_DISABLE_2D
 
+  addEffect(FX_MODE_SNAKE, &mode_snake, _data_FX_MODE_SNAKE);
 }
