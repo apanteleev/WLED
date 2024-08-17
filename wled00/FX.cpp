@@ -8040,6 +8040,13 @@ static const char _data_FX_MODE_2DWAVINGCELL[] PROGMEM = "Waving Cell@!,,Amplitu
 
 #endif // WLED_DISABLE_2D
 
+int distanceSquared(int16_t const* p1, int16_t const* p2)
+{
+  int dx = p1[0] - p2[0];
+  int dy = p1[1] - p2[1];
+  return dx * dx + dy * dy;
+}
+
 uint16_t mode_snake(void) {
   if (!segment_is_webb(SEGLEN))
     return mode_static();
@@ -8050,6 +8057,7 @@ uint16_t mode_snake(void) {
   struct sim_data_t
   {
     uint16_t head;
+    uint16_t food;
     bool up;
   };
 
@@ -8063,8 +8071,13 @@ uint16_t mode_snake(void) {
       // Initialize at a random location
       sim_data.head = random16(WEBB_LEDS_COMBINED);
       sim_data.up = true;
+      do {
+        sim_data.food = random16(WEBB_LEDS_COMBINED);
+      } while(sim_data.food == sim_data.head);
     }
     else {
+      int16_t const* foodPos = g_WebbPositionsCartesian[sim_data.food];
+
       // Run the simulation - look for the segment the head is currently in
       for (int segmentIndex = 0; segmentIndex < WEBB_SEGMENTS; ++segmentIndex) {
 
@@ -8072,42 +8085,68 @@ uint16_t mode_snake(void) {
         if (sim_data.head >= segment->begin && sim_data.head <= segment->end) {
           // Found the segment
 
+          // Find out the options for the next step
+          int16_t option1 = -1;
+          int16_t option2 = -1;
+
           if (sim_data.head == segment->begin && !sim_data.up) {
             // At the beginning of the segment, going down
-            int16_t const adj = (segment->beginAdj1 >= 0 && random8() > 128)
-              ? segment->beginAdj1
-              : segment->beginAdj0;
-            sim_data.head = adj & (WEBB_ADJACENT_DOWN - 1);
-            sim_data.up = (adj & WEBB_ADJACENT_DOWN) == 0;
-
+            option1 = segment->beginAdj0;
+            option2 = segment->beginAdj1;
           } else if (sim_data.head == segment->end && sim_data.up) {
             // At the end of the segment, going up
-            int16_t const adj = (segment->endAdj1 >= 0 && random8() > 128)
-              ? segment->endAdj1
-              : segment->endAdj0;
-            sim_data.head = adj & (WEBB_ADJACENT_DOWN - 1);
-            sim_data.up = (adj & WEBB_ADJACENT_DOWN) == 0;
-
+            option1 = segment->endAdj0;
+            option2 = segment->endAdj1;
           } else {
-            // Somewhere inside the segment
+            // Somewhere inside the segment, no real choice, just keep going
             if (sim_data.up)
               ++sim_data.head;
             else
               --sim_data.head;
+            break; // Skip the decision logic below
           }
+
+          // Decide which way to go
+          int16_t next;
+          if (option2 < 0) {
+            // Only one option (i.e. peripherial segments)
+            next = option1;
+          }
+          else {
+            // Two options - choose one that brings the head closer to the food
+            int16_t const* pos1 = g_WebbPositionsCartesian[option1 & (WEBB_ADJACENT_DOWN-1)];
+            int16_t const* pos2 = g_WebbPositionsCartesian[option2 & (WEBB_ADJACENT_DOWN-1)];
+            int d1 = distanceSquared(foodPos, pos1);
+            int d2 = distanceSquared(foodPos, pos2);
+            next = (d1 <= d2) ? option1 : option2;
+          }
+
+          // Update the head position
+          sim_data.head = next & (WEBB_ADJACENT_DOWN-1);
+          sim_data.up = (next & WEBB_ADJACENT_DOWN) == 0;
 
           break;
         }
 
+      }
+
+      if (sim_data.head == sim_data.food) {
+        // Eat and relocate the food
+        do {
+          sim_data.food = random16(WEBB_LEDS_COMBINED);
+        } while(sim_data.food == sim_data.head);
       }
     }
   }
 
   int baseIndex = (SEGLEN == WEBB_LEDS_INNER) ? 0 : WEBB_LEDS_INNER;
   for (int i = 0; i < SEGLEN; i++) {
+    int ledIndex = i + baseIndex;
     CRGB color;
-    if (baseIndex + i == sim_data.head)
+    if (ledIndex == sim_data.head)
       color = WHITE;
+    else if (ledIndex == sim_data.food)
+      color = RED;
     else
       color = BLACK;
     SEGMENT.setPixelColor(i, color);
