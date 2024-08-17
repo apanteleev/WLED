@@ -8058,7 +8058,29 @@ uint16_t mode_snake(void) {
   {
     uint16_t head;
     uint16_t food;
+    uint16_t length;
+    uint16_t step;
     bool up;
+    uint16_t headSteps[WEBB_LEDS_COMBINED];
+
+    void reset() {
+      // Initialize at a random location
+      head = random16(WEBB_LEDS_COMBINED);
+      length = 1;
+      up = true;
+      do {
+        food = random16(WEBB_LEDS_COMBINED);
+      } while(food == head);
+
+      memset(headSteps, 0, sizeof(headSteps));
+
+      step = 1;
+      headSteps[head] = 1;
+    }
+
+    bool isTail(int16_t ledIndex) {
+      return step - headSteps[ledIndex] <= length;
+    }
   };
 
   if (!sim_segment.allocateData(sizeof(sim_data_t))) return mode_static(); // allocation failed
@@ -8067,15 +8089,11 @@ uint16_t mode_snake(void) {
   if (strip.getCurrSegmentId() == 0) {
     // Segment 0 runs the simulation
 
-    if(sim_segment.call == 0) {
-      // Initialize at a random location
-      sim_data.head = random16(WEBB_LEDS_COMBINED);
-      sim_data.up = true;
-      do {
-        sim_data.food = random16(WEBB_LEDS_COMBINED);
-      } while(sim_data.food == sim_data.head);
+    if(sim_segment.call == 0 || sim_data.length > 100) {
+      sim_data.reset();
     }
     else {
+      ++sim_data.step;
       int16_t const* foodPos = g_WebbPositionsCartesian[sim_data.food];
 
       // Run the simulation - look for the segment the head is currently in
@@ -8134,8 +8152,14 @@ uint16_t mode_snake(void) {
         // Eat and relocate the food
         do {
           sim_data.food = random16(WEBB_LEDS_COMBINED);
-        } while(sim_data.food == sim_data.head);
+        } while(sim_data.food == sim_data.head || sim_data.isTail(sim_data.food));
+        ++sim_data.length;
       }
+
+      if (sim_data.isTail(sim_data.head))
+        sim_data.reset();
+      else
+        sim_data.headSteps[sim_data.head] = sim_data.step;
     }
   }
 
@@ -8147,6 +8171,8 @@ uint16_t mode_snake(void) {
       color = WHITE;
     else if (ledIndex == sim_data.food)
       color = RED;
+    else if (sim_data.isTail(ledIndex))
+      color = BLUE;
     else
       color = BLACK;
     SEGMENT.setPixelColor(i, color);
