@@ -8060,8 +8060,9 @@ uint16_t mode_snake(void) {
     uint16_t food;
     uint16_t length;
     uint16_t step;
-    bool up;
+    uint16_t grow;
     uint16_t headSteps[WEBB_LEDS_COMBINED];
+    bool up;
 
     void reset() {
       // Initialize at a random location
@@ -8074,6 +8075,7 @@ uint16_t mode_snake(void) {
 
       memset(headSteps, 0, sizeof(headSteps));
 
+      grow = 0;
       step = 1;
       headSteps[head] = 1;
     }
@@ -8153,7 +8155,15 @@ uint16_t mode_snake(void) {
         do {
           sim_data.food = random16(WEBB_LEDS_COMBINED);
         } while(sim_data.food == sim_data.head || sim_data.isTail(sim_data.food));
+
+        // Schedule some growing
+        sim_data.grow += (sim_segment.speed >> 5) + 1;
+      }
+
+      // Grow the snake by 1 pixel at a time to avoid the tail suddently getting longer
+      if (sim_data.grow > 0) {
         ++sim_data.length;
+        --sim_data.grow;
       }
 
       if (sim_data.isTail(sim_data.head))
@@ -8167,12 +8177,17 @@ uint16_t mode_snake(void) {
   for (int i = 0; i < SEGLEN; i++) {
     int ledIndex = i + baseIndex;
     CRGB color;
-    if (ledIndex == sim_data.head)
-      color = WHITE;
-    else if (ledIndex == sim_data.food)
-      color = RED;
-    else if (sim_data.isTail(ledIndex))
-      color = BLUE;
+    if (ledIndex == sim_data.head) {
+      color = sim_segment.colors[0];
+    }
+    else if (ledIndex == sim_data.food) {
+      color = sim_segment.colors[1];
+    }
+    else if (sim_data.isTail(ledIndex)) {
+      uint16_t paletteIndex = sim_data.step - sim_data.headSteps[ledIndex];
+      paletteIndex = (paletteIndex * 255) / max(sim_data.length, uint16_t(10));
+      color = sim_segment.color_from_palette(paletteIndex, false, false, 0);
+    }
     else
       color = BLACK;
     SEGMENT.setPixelColor(i, color);
@@ -8180,7 +8195,7 @@ uint16_t mode_snake(void) {
 
   return FRAMETIME;
 }
-static const char _data_FX_MODE_SNAKE[] PROGMEM = "Snake@Fade speed,Spawn speed;;!;;;";
+static const char _data_FX_MODE_SNAKE[] PROGMEM = "Snake@Grow speed;Sn,Fd;!;;;sx=0";
 
 
 //////////////////////////////////////////////////////////////////////////////////////////
