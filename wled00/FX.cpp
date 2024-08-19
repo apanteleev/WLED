@@ -8061,8 +8061,10 @@ uint16_t mode_snake(void) {
     uint16_t length;
     uint16_t step;
     uint16_t grow;
+    uint32_t deathTime;
     uint16_t headSteps[WEBB_LEDS_COMBINED];
     bool up;
+    bool blink;
 
     void reset() {
       // Initialize at a random location
@@ -8078,21 +8080,31 @@ uint16_t mode_snake(void) {
       grow = 0;
       step = 1;
       headSteps[head] = 1;
+      deathTime = 0;
+      blink = true;
     }
 
     bool isTail(int16_t ledIndex) {
-      return step - headSteps[ledIndex] <= length;
+      return step - headSteps[ledIndex] < length;
     }
   };
 
   if (!sim_segment.allocateData(sizeof(sim_data_t))) return mode_static(); // allocation failed
   sim_data_t& sim_data = *reinterpret_cast<sim_data_t*>(sim_segment.data);
-
+  
   if (strip.getCurrSegmentId() == 0) {
     // Segment 0 runs the simulation
 
-    if(sim_segment.call == 0 || sim_data.length > 100) {
+    sim_data.blink = true;
+
+    if(sim_segment.call == 0) {
       sim_data.reset();
+    }
+    else if (sim_data.deathTime != 0) {
+      uint32_t timeDiff = strip.now - sim_data.deathTime;
+      sim_data.blink = ((timeDiff >> 7) & 1) != 0;
+      if (timeDiff >= 1536)
+        sim_data.reset();
     }
     else {
       ++sim_data.step;
@@ -8167,7 +8179,7 @@ uint16_t mode_snake(void) {
       }
 
       if (sim_data.isTail(sim_data.head))
-        sim_data.reset();
+        sim_data.deathTime = strip.now;
       else
         sim_data.headSteps[sim_data.head] = sim_data.step;
     }
@@ -8178,7 +8190,7 @@ uint16_t mode_snake(void) {
     int ledIndex = i + baseIndex;
     CRGB color;
     if (ledIndex == sim_data.head) {
-      color = sim_segment.colors[0];
+      color = sim_data.blink ? sim_segment.colors[0] : BLACK;
     }
     else if (ledIndex == sim_data.food) {
       color = sim_segment.colors[1];
@@ -8186,7 +8198,7 @@ uint16_t mode_snake(void) {
     else if (sim_data.isTail(ledIndex)) {
       uint16_t paletteIndex = sim_data.step - sim_data.headSteps[ledIndex];
       paletteIndex = (paletteIndex * 255) / max(sim_data.length, uint16_t(10));
-      color = sim_segment.color_from_palette(paletteIndex, false, false, 0);
+      color = sim_data.blink ? sim_segment.color_from_palette(paletteIndex, false, false, 0) : BLACK;
     }
     else
       color = BLACK;
