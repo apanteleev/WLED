@@ -130,9 +130,9 @@ void handleSettingsSet(AsyncWebServerRequest *request, byte subPage)
     unsigned ablMilliampsMax = request->arg(F("MA")).toInt();
     BusManager::setMilliampsMax(ablMilliampsMax);
 
-    autoSegments = request->hasArg(F("MS"));
-    correctWB = request->hasArg(F("CCT"));
-    cctFromRgb = request->hasArg(F("CR"));
+    strip.autoSegments = request->hasArg(F("MS"));
+    strip.correctWB = request->hasArg(F("CCT"));
+    strip.cctFromRgb = request->hasArg(F("CR"));
     cctICused = request->hasArg(F("IC"));
     strip.cctBlending = request->arg(F("CB")).toInt();
     Bus::setCCTBlend(strip.cctBlending);
@@ -289,7 +289,7 @@ void handleSettingsSet(AsyncWebServerRequest *request, byte subPage)
           #ifdef SOC_TOUCH_VERSION_2 // ESP32 S2 and S3 have a fucntion to check touch state but need to attach an interrupt to do so
           else                    
           {
-            touchAttachInterrupt(btnPin[i], touchButtonISR, 256 + (touchThreshold << 4)); // threshold on Touch V2 is much higher (1500 is a value given by Espressif example, I measured changes of over 5000)
+            touchAttachInterrupt(btnPin[i], touchButtonISR, touchThreshold << 4); // threshold on Touch V2 is much higher (1500 is a value given by Espressif example, I measured changes of over 5000)
           }
           #endif          
         }
@@ -421,12 +421,14 @@ void handleSettingsSet(AsyncWebServerRequest *request, byte subPage)
     t = request->arg(F("WO")).toInt();
     if (t >= -255  && t <= 255) arlsOffset = t;
 
+    #ifndef WLED_DISABLE_ALEXA
     alexaEnabled = request->hasArg(F("AL"));
     strlcpy(alexaInvocationName, request->arg(F("AI")).c_str(), 33);
     t = request->arg(F("AP")).toInt();
     if (t >= 0 && t <= 9) alexaNumPresets = t;
+    #endif
 
-    #ifdef WLED_ENABLE_MQTT
+    #ifndef WLED_DISABLE_MQTT
     mqttEnabled = request->hasArg(F("MQ"));
     strlcpy(mqttServer, request->arg(F("MS")).c_str(), MQTT_MAX_SERVER_LEN+1);
     t = request->arg(F("MQPORT")).toInt();
