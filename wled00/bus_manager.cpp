@@ -532,10 +532,14 @@ void BusPwm::show() {
   if (!_valid) return;
   unsigned numPins = NUM_PWM_PINS(_type);
   unsigned maxBri = (1<<_depth) - 1;
+
+  // WEBB HACK: I want the center hexagon to have brighter backlight, otherwise it's almost invisible at low overall brightness settings.
+  uint8_t const bri = (_bri == 0) ? 0 : 64 + ((_bri * 3) >> 2);
+
   #ifdef ESP8266
-  unsigned pwmBri = (unsigned)(roundf(powf((float)_bri / 255.0f, 1.7f) * (float)maxBri)); // using gamma 1.7 to extrapolate PWM duty cycle
+  unsigned pwmBri = (unsigned)(roundf(powf((float)bri / 255.0f, 1.7f) * (float)maxBri)); // using gamma 1.7 to extrapolate PWM duty cycle
   #else
-  unsigned pwmBri = cieLUT[_bri] >> (12 - _depth); // use CIE LUT
+  unsigned pwmBri = cieLUT[bri] >> (12 - _depth); // use CIE LUT
   #endif
   for (unsigned i = 0; i < numPins; i++) {
     unsigned scaled = (_data[i] * pwmBri) / 255;
