@@ -8062,6 +8062,7 @@ uint16_t mode_snake(void) {
     uint16_t step;
     uint16_t grow;
     uint32_t deathTime;
+    uint32_t updateTime;
     uint16_t headSteps[WEBB_LEDS_COMBINED];
     bool up;
     bool blink;
@@ -8082,6 +8083,7 @@ uint16_t mode_snake(void) {
       headSteps[head] = 1;
       deathTime = 0;
       blink = true;
+      updateTime = strip.now;
     }
 
     bool isTail(int16_t ledIndex) {
@@ -8107,81 +8109,88 @@ uint16_t mode_snake(void) {
         sim_data.reset();
     }
     else {
-      ++sim_data.step;
-      int16_t const* foodPos = g_WebbPositionsCartesian[sim_data.food];
+      long targetFps = map(sim_segment.speed, 0, 255, 10, 42);
+      long targetFrameTime = 1000 / targetFps;
 
-      // Run the simulation - look for the segment the head is currently in
-      for (int segmentIndex = 0; segmentIndex < WEBB_SEGMENTS; ++segmentIndex) {
+      if (strip.now - sim_data.updateTime >= targetFrameTime) {
+        sim_data.updateTime = strip.now;
+        
+        ++sim_data.step;
+        int16_t const* foodPos = g_WebbPositionsCartesian[sim_data.food];
 
-        webb_segment_def_t const* segment = reinterpret_cast<webb_segment_def_t const*>(g_WebbSegments[segmentIndex]);
-        if (sim_data.head >= segment->begin && sim_data.head <= segment->end) {
-          // Found the segment
+        // Run the simulation - look for the segment the head is currently in
+        for (int segmentIndex = 0; segmentIndex < WEBB_SEGMENTS; ++segmentIndex) {
 
-          // Find out the options for the next step
-          int16_t option1 = -1;
-          int16_t option2 = -1;
+          webb_segment_def_t const* segment = reinterpret_cast<webb_segment_def_t const*>(g_WebbSegments[segmentIndex]);
+          if (sim_data.head >= segment->begin && sim_data.head <= segment->end) {
+            // Found the segment
 
-          if (sim_data.head == segment->begin && !sim_data.up) {
-            // At the beginning of the segment, going down
-            option1 = segment->beginAdj0;
-            option2 = segment->beginAdj1;
-          } else if (sim_data.head == segment->end && sim_data.up) {
-            // At the end of the segment, going up
-            option1 = segment->endAdj0;
-            option2 = segment->endAdj1;
-          } else {
-            // Somewhere inside the segment, no real choice, just keep going
-            if (sim_data.up)
-              ++sim_data.head;
-            else
-              --sim_data.head;
-            break; // Skip the decision logic below
+            // Find out the options for the next step
+            int16_t option1 = -1;
+            int16_t option2 = -1;
+
+            if (sim_data.head == segment->begin && !sim_data.up) {
+              // At the beginning of the segment, going down
+              option1 = segment->beginAdj0;
+              option2 = segment->beginAdj1;
+            } else if (sim_data.head == segment->end && sim_data.up) {
+              // At the end of the segment, going up
+              option1 = segment->endAdj0;
+              option2 = segment->endAdj1;
+            } else {
+              // Somewhere inside the segment, no real choice, just keep going
+              if (sim_data.up)
+                ++sim_data.head;
+              else
+                --sim_data.head;
+              break; // Skip the decision logic below
+            }
+
+            // Decide which way to go
+            int16_t next;
+            if (option2 < 0) {
+              // Only one option (i.e. peripherial segments)
+              next = option1;
+            }
+            else {
+              // Two options - choose one that brings the head closer to the food
+              int16_t const* pos1 = g_WebbPositionsCartesian[option1 & (WEBB_ADJACENT_DOWN-1)];
+              int16_t const* pos2 = g_WebbPositionsCartesian[option2 & (WEBB_ADJACENT_DOWN-1)];
+              int d1 = distanceSquared(foodPos, pos1);
+              int d2 = distanceSquared(foodPos, pos2);
+              next = (d1 <= d2) ? option1 : option2;
+            }
+
+            // Update the head position
+            sim_data.head = next & (WEBB_ADJACENT_DOWN-1);
+            sim_data.up = (next & WEBB_ADJACENT_DOWN) == 0;
+
+            break;
           }
 
-          // Decide which way to go
-          int16_t next;
-          if (option2 < 0) {
-            // Only one option (i.e. peripherial segments)
-            next = option1;
-          }
-          else {
-            // Two options - choose one that brings the head closer to the food
-            int16_t const* pos1 = g_WebbPositionsCartesian[option1 & (WEBB_ADJACENT_DOWN-1)];
-            int16_t const* pos2 = g_WebbPositionsCartesian[option2 & (WEBB_ADJACENT_DOWN-1)];
-            int d1 = distanceSquared(foodPos, pos1);
-            int d2 = distanceSquared(foodPos, pos2);
-            next = (d1 <= d2) ? option1 : option2;
-          }
-
-          // Update the head position
-          sim_data.head = next & (WEBB_ADJACENT_DOWN-1);
-          sim_data.up = (next & WEBB_ADJACENT_DOWN) == 0;
-
-          break;
         }
 
+        if (sim_data.head == sim_data.food) {
+          // Eat and relocate the food
+          do {
+            sim_data.food = random16(WEBB_LEDS_COMBINED);
+          } while(sim_data.food == sim_data.head || sim_data.isTail(sim_data.food));
+
+          // Schedule some growing
+          sim_data.grow += (sim_segment.intensity >> 5) + 1;
+        }
+
+        // Grow the snake by 1 pixel at a time to avoid the tail suddently getting longer
+        if (sim_data.grow > 0) {
+          ++sim_data.length;
+          --sim_data.grow;
+        }
+
+        if (sim_data.isTail(sim_data.head))
+          sim_data.deathTime = strip.now;
+        else
+          sim_data.headSteps[sim_data.head] = sim_data.step;
       }
-
-      if (sim_data.head == sim_data.food) {
-        // Eat and relocate the food
-        do {
-          sim_data.food = random16(WEBB_LEDS_COMBINED);
-        } while(sim_data.food == sim_data.head || sim_data.isTail(sim_data.food));
-
-        // Schedule some growing
-        sim_data.grow += (sim_segment.speed >> 5) + 1;
-      }
-
-      // Grow the snake by 1 pixel at a time to avoid the tail suddently getting longer
-      if (sim_data.grow > 0) {
-        ++sim_data.length;
-        --sim_data.grow;
-      }
-
-      if (sim_data.isTail(sim_data.head))
-        sim_data.deathTime = strip.now;
-      else
-        sim_data.headSteps[sim_data.head] = sim_data.step;
     }
   }
 
@@ -8207,7 +8216,7 @@ uint16_t mode_snake(void) {
 
   return FRAMETIME;
 }
-static const char _data_FX_MODE_SNAKE[] PROGMEM = "Snake@Grow speed;Sn,Fd;!;;;sx=0";
+static const char _data_FX_MODE_SNAKE[] PROGMEM = "Snake@Move speed,Grow speed;Sn,Fd;!;;;sx=256,ix=128";
 
 
 //////////////////////////////////////////////////////////////////////////////////////////
